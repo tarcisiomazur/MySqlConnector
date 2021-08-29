@@ -1,11 +1,11 @@
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
-using Persistence;
+using System.Reflection;
 
 namespace MySqlConnector
 {
-    public static class Settings
+    internal static class Settings
     {
         static Settings()
         {
@@ -13,13 +13,13 @@ namespace MySqlConnector
             Load("C:\\Users\\tarci\\OneDrive\\Projeto de Software\\Loje\\Loje\\Database.cfg");
         }
         
-        public static string Server { get; set; }
-        public static string Database { get; set; }
-        public static ushort Port { get; set; }
-        public static string UserID { get; set; }
-        public static string Password { get; set; }
-        
-        public static void Load(string filename)
+        internal static string Server { get; set; }
+        internal static string Database { get; set; }
+        internal static ushort Port { get; set; }
+        internal static string UserID { get; set; }
+        internal static string Password { get; set; }
+
+        private static void Load(string filename)
         {
             foreach (var rawLine in File.ReadAllLines(filename))
             {
@@ -34,7 +34,7 @@ namespace MySqlConnector
 
                 var currentKey = split[0].Trim();
                 var currentValue = split[1].Trim();
-                typeof(Settings).GetProperties().Where(info => info.Name.Equals(currentKey)).Do(info =>
+                typeof(Settings).GetProperties(BindingFlags.Static | BindingFlags.NonPublic).Where(info => info.Name.Equals(currentKey)).Do(info =>
                 {
                     var converter = TypeDescriptor.GetConverter(info.PropertyType);
                     info.SetValue(null, converter.ConvertFromString(currentValue));

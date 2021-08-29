@@ -4,8 +4,17 @@ using Nullable = Persistence.Nullable;
 
 namespace MySqlConnector
 {
-    public static class Tools
+    internal static class Tools
     {
+        public static void Do<T>(this IEnumerable<T> sequence, Action<T> action)
+        {
+            if (sequence == null)
+                return;
+            IEnumerator<T> enumerator = sequence.GetEnumerator();
+            while (enumerator.MoveNext())
+                action(enumerator.Current);
+        }
+        
         public static string ToSql(this Nullable nullable)
         {
             return nullable == Nullable.Null ? "NULL" : "NOT NULL";

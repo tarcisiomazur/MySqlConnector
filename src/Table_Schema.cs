@@ -1,6 +1,6 @@
 namespace MySqlConnector
 {
-    public class KEY_TABLE_SCHEMA
+    internal class KEY_TABLE_SCHEMA
     {
         
         public string TABLE_NAME { get; set; }
@@ -13,7 +13,7 @@ namespace MySqlConnector
         public string REFERENCED_COLUMN_NAME { get; set; }
         
     }
-    public class COLUMN_TABLE_SCHEMA
+    internal class COLUMN_TABLE_SCHEMA
     {
         public string COLUMN_NAME { get; set; }
         public string COLUMN_TYPE { get; set; }

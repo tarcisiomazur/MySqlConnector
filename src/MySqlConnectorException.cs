@@ -1,15 +1,17 @@
 using System;
-using System.Runtime.Serialization;
+using MySql.Data.MySqlClient;
+using Persistence;
 
 namespace MySqlConnector
 {
     [Serializable]
-    public class MySqlConnectorException : Exception
+    public class MySqlConnectorException : Exception, SQLException
     {
+        public int ErrorCode { get; set; }
 
         public MySqlConnectorException(){
 
-    }
+        }
 
         public MySqlConnectorException(string message) : base(message)
         {
@@ -18,14 +20,12 @@ namespace MySqlConnector
 
         public MySqlConnectorException(string message, Exception inner) : base(message, inner)
         {
-            
+            if (inner is MySqlException mex)
+            {
+                ErrorCode = mex.ErrorCode;
+            }
         }
-
-        protected MySqlConnectorException(
-            SerializationInfo info,
-            StreamingContext context) : base(info, context)
-        {
-        }
+        
     }
 
 }

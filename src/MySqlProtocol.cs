@@ -75,21 +75,21 @@ namespace MySqlConnector
         }
 
 
-        bool ISQL.ValidadeForeignKeys(Table table, ManyToOne manyToOne)
+        bool ISQL.ValidadeForeignKeys(Table table, Relationship relationship)
         {
             if (SkipVerification) return true;
             var tableCols = DbExecutor.LoadTableColumns(table.SqlName, table.Schema);
             var keys = DbExecutor.LoadTableKeys(table.SqlName, table.Schema);
 
-            foreach (var (name, field) in manyToOne.Links)
+            foreach (var (name, field) in relationship.Links)
             {
                 if (!tableCols.Any(cts => cts.COLUMN_TYPE.SQLEquals(GetSqlFieldType(field)) &&
                                           cts.COLUMN_NAME.SQLEquals(name)) ||
-                    !keys.Any(key => key.CONSTRAINT_NAME.SQLEquals(manyToOne.FkName) &&
+                    !keys.Any(key => key.CONSTRAINT_NAME.SQLEquals(relationship.FkName) &&
                                      key.COLUMN_TYPE.SQLEquals(GetSqlFieldType(field)) &&
                                      key.COLUMN_NAME.SQLEquals(name)))
                 {
-                    return ForwardEngineer && DbExecutor.UpdateForeignKeys(table, manyToOne, tableCols, keys);
+                    return ForwardEngineer && DbExecutor.UpdateForeignKeys(table, relationship, tableCols, keys);
                 }
             }
 
@@ -125,7 +125,7 @@ namespace MySqlConnector
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
             cmd.SetParameter("@fieldAndValue", fields.Join(",", pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"));
-            cmd.SetParameter("@keyAndValue", keys.Join(",", pair => $"{pair.Key.SqlName} = {_ConvertValueToString(pair.Value)}"));
+            cmd.SetParameter("@keyAndValue", keys.Join(" AND ", pair => $"{pair.Key.SqlName} = {_ConvertValueToString(pair.Value)}"));
             
             try
             {
@@ -137,14 +137,20 @@ namespace MySqlConnector
                 throw new MySqlConnectorException($"MySql Error on save {table.SqlName}", ex);
             }
         }
+
         long ISQL.InsertOrUpdate(Table table, Dictionary<string, object> fields)
         {
-            var command = $"INSERT INTO {table.SqlName} ({string.Join(",", fields.Keys)}) " +
-                          $"VALUES({string.Join(",", fields.Values.Select(_ConvertValueToString))}) " +
-                          $"ON DUPLICATE KEY UPDATE {string.Join(", ", fields.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))} ";
-
+            var command = "INSERT INTO @schema.@table (@onlyFields) VALUES(@onlyValues) "+
+                          "ON DUPLICATE KEY UPDATE @fieldEqualsValue";
             var cmd = MysqlManager.GetConn().CreateCommand();
             cmd.CommandText = command;
+            cmd.SetParameter("@schema", table.Schema);
+            cmd.SetParameter("@table", table.SqlName);
+            cmd.SetParameter("@onlyFields", string.Join(",", fields.Keys));
+            cmd.SetParameter("@onlyValues", fields.Join(",", pair => _ConvertValueToString(pair.Value)));
+            cmd.SetParameter("@fieldEqualsValue", fields.Join(",", pair => $"{pair.Key}={_ConvertValueToString(pair.Value)}"));
+
+            Console.WriteLine(cmd.CommandText);
             try
             {
                 var exec = cmd.ExecuteNonQuery();
@@ -161,7 +167,7 @@ namespace MySqlConnector
             var cmd = MysqlManager.GetConn().CreateCommand();
             var command =
                 $"SELECT *FROM {table.Schema}.{table.SqlName} " +
-                $"WHERE {string.Join(", ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}";
+                $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}";
             cmd.CommandText = command;
             try
             {
@@ -179,7 +185,7 @@ namespace MySqlConnector
             var cmd = MysqlManager.GetConn().CreateCommand();
             var command =
                 $"SELECT *FROM {table.SqlName} " +
-                $"WHERE {string.Join(", ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}" +
+                $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}" +
                 $"LIMITED({first},{count})";
             cmd.CommandText = command;
             try
@@ -212,7 +218,7 @@ namespace MySqlConnector
         bool ISQL.Delete(Table table, Dictionary<string, object> keys)
         {
             var command = $"DELETE FROM {table.SqlName} " +
-                          $"WHERE {string.Join(", ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}";
+                          $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}";
             try
             {
                 var cmd = MysqlManager.GetConn().CreateCommand();
@@ -229,7 +235,7 @@ namespace MySqlConnector
         {
             var cmd = MysqlManager.GetConn().CreateCommand();
             var command = $"SELECT count(*) {table.SqlName}" +
-                          $"WHERE {string.Join(", ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}";
+                          $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}";
             cmd.CommandText = command;
             var reader = cmd.ExecuteReader();
             if (reader.Read())
@@ -296,7 +302,7 @@ namespace MySqlConnector
             return value switch
             {
                 decimal @decimal => @decimal.ToString(CultureInfo.InvariantCulture),
-                string @string => $"'{@string}'",
+                string @string => $"'{@string.Replace("'", "\\'").Replace(";", "\\;")}'",
                 _ => value?.ToString()
             };
         }

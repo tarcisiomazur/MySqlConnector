@@ -4,11 +4,10 @@ using System.Data;
 using System.Linq;
 using MySql.Data.MySqlClient;
 using Persistence;
-using Nullable = Persistence.Nullable;
 
 namespace MySqlConnector
 {
-    public static class DbExecutor
+    internal static class DbExecutor
     {
         public static void SetParameter(this MySqlCommand command, string parameter, object value)
         {
@@ -214,49 +213,50 @@ namespace MySqlConnector
             return str;
         }
 
-        private static string BuildFkField(KeyValuePair<string, Field> link, ManyToOne manyToOne)
+        private static string BuildFkField(KeyValuePair<string, Field> link, Relationship relationship)
         {
             var str = $"{link.Key} {MySqlProtocol.GetSqlFieldType(link.Value)} ";
-            str += manyToOne.Nullable.ToSql();
+            str += relationship.Nullable.ToSql();
             if (link.Value.DefaultValue != null)
                 str += " DEFAULT " + MySqlProtocol._ConvertValueToString(link.Value.DefaultValue);
             return str;
         }
 
 
-        public static bool UpdateForeignKeys(Table table, ManyToOne manyToOne, List<COLUMN_TABLE_SCHEMA> tableCols,
+        public static bool UpdateForeignKeys(Table table, Relationship relationship, List<COLUMN_TABLE_SCHEMA> tableCols,
             List<KEY_TABLE_SCHEMA> keys)
         {
             var query = "";
-            if (keys.Any(key => key.CONSTRAINT_NAME.SQLEquals(manyToOne.FkName)))
+            if (keys.Any(key => key.CONSTRAINT_NAME.SQLEquals(relationship.FkName)))
                 query = "ALTER TABLE @schema.@table DROP FOREIGN KEY @fk_name;\n";
-            if (IndexExist(table.SqlName, table.Schema, manyToOne.FkName))
+            if (IndexExist(table.SqlName, table.Schema, relationship.FkName))
                 query += "ALTER TABLE @schema.@table DROP INDEX @fk_name;\n";
             
             var fieldChanges = "";
-            foreach (var link in manyToOne.Links)
+            foreach (var link in relationship.Links)
             {
                 var sch = tableCols.FirstOrDefault(cts => cts.COLUMN_NAME.SQLEquals(link.Key));
-                fieldChanges += (sch == default? "ADD COLUMN " : "MODIFY COLUMN ") + BuildFkField(link,manyToOne) + ",";
+                fieldChanges += (sch == default? "ADD COLUMN " : "MODIFY COLUMN ") + BuildFkField(link,relationship) + ",";
             }
 
             if (tableCols.Count == 0)
                 query =
-                    "CREATE TABLE @schema.@table (@keysAndType, CONSTRAINT @fk_name FOREIGN KEY (@onlykeys) REFERENCES @schema.@ref_table(ref_field)";
+                    "CREATE TABLE @schema.@table (@keysAndType, CONSTRAINT @fk_name FOREIGN KEY (@onlykeys) REFERENCES @schema.@ref_table(@ref_field) @options";
             else 
                 query += "ALTER TABLE @schema.@table @fieldChanges" +
-                         "ADD CONSTRAINT @fk_name FOREIGN KEY (@onlyfields) REFERENCES @schema.@ref_table(@ref_field);";
+                         "ADD CONSTRAINT @fk_name FOREIGN KEY (@onlyfields) REFERENCES @schema.@ref_table(@ref_field) @options";
 
             var cmd = MysqlManager.CreateTransaction();
             cmd.CommandText = query;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
-            cmd.SetParameter("@onlyfields", string.Join(",", manyToOne.Links.Select(link=>link.Key)));
-            cmd.SetParameter("@keysAndType", string.Join(",", manyToOne.Links.Select(link=>BuildFkField(link,manyToOne))));
-            cmd.SetParameter("@fk_name", manyToOne.FkName);
-            cmd.SetParameter("@ref_table", manyToOne.TableReferenced.SqlName);
-            cmd.SetParameter("@ref_field", string.Join(",", manyToOne.Links.Select(link=>link.Value.SqlName)));
+            cmd.SetParameter("@onlyfields", string.Join(",", relationship.Links.Select(link=>link.Key)));
+            cmd.SetParameter("@keysAndType", string.Join(",", relationship.Links.Select(link=>BuildFkField(link,relationship))));
+            cmd.SetParameter("@fk_name", relationship.FkName);
+            cmd.SetParameter("@ref_table", relationship.TableReferenced.SqlName);
+            cmd.SetParameter("@ref_field", string.Join(",", relationship.Links.Select(link=>link.Value.SqlName)));
             cmd.SetParameter("@fieldChanges", fieldChanges);
+            cmd.SetParameter("@options", $"ON UPDATE {relationship.OnUpdate} ON DELETE {relationship.OnDelete}");
             
             try
             {
@@ -268,7 +268,7 @@ namespace MySqlConnector
             {
                 cmd.Transaction.Rollback();
                 throw new MySqlConnectorException(
-                    $"Error on create table {manyToOne.Table.SqlName} in database {manyToOne.Table.Schema}",
+                    $"Error on create table {relationship.Table.SqlName} in database {relationship.Table.Schema}",
                     ex);
             }
 

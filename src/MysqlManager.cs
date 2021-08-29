@@ -4,7 +4,7 @@ using MySql.Data.MySqlClient;
 
 namespace MySqlConnector
 {
-    public static class MysqlManager
+    internal static class MysqlManager
     {
         private static MySqlClientFactory _factory;
         private static MySqlConnection _connection;
