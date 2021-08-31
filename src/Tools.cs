@@ -19,6 +19,13 @@ namespace MySqlConnector
         {
             return nullable == Nullable.Null ? "NULL" : "NOT NULL";
         }
+        
+        public static string ToSql(this DateTime dateTime)
+        {
+            return dateTime == DateTime.MinValue? "NULL" : $"'{dateTime:yyyy/MM/dd HH:mm:ss}'";
+            
+        }
+        
         public static bool SQLEquals(this string s1, string s2)
         {
             return s1.Equals(s2, StringComparison.CurrentCultureIgnoreCase);

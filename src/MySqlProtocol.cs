@@ -100,13 +100,13 @@ namespace MySqlConnector
         {
             if (SkipVerification) return true;
             var tableCols = DbExecutor.LoadTableColumns(table.SqlName, table.Schema);
-            var keys = DbExecutor.LoadTableKeys(table.SqlName, table.Schema);
+            var keys = DbExecutor.LoadTableKeys(table.SqlName, table.Schema)
+                .Where(key => key.CONSTRAINT_NAME == "PRIMARY").ToList();
             foreach (var pk in primaryKeys)
             {
-                if (!tableCols.Any(cts => cts.COLUMN_TYPE.SQLEquals(GetSqlFieldType(pk)) && 
+                if (!tableCols.Any(cts => cts.COLUMN_TYPE.SQLEquals(GetSqlFieldType(pk)) &&
                                           cts.COLUMN_NAME.SQLEquals(pk.SqlName)) ||
-                    !keys.Any(key => key.CONSTRAINT_NAME == "PRIMARY" &&
-                                     key.COLUMN_TYPE.SQLEquals(GetSqlFieldType(pk)) &&
+                    !keys.Any(key => key.COLUMN_TYPE.SQLEquals(GetSqlFieldType(pk)) &&
                                      key.COLUMN_NAME.SQLEquals(pk.SqlName)))
                 {
                     return ForwardEngineer && DbExecutor.UpdatePrimaryKeys(table, primaryKeys, tableCols, keys);
@@ -202,8 +202,11 @@ namespace MySqlConnector
         DbDataReader ISQL.SelectWhereQuery(Table table, string query)
         {
             var cmd = MysqlManager.GetConn().CreateCommand();
-            var command = $"SELECT *FROM {table.SqlName} WHERE {query}";
+            var command = $"SELECT *FROM @schema.@table WHERE @query";
             cmd.CommandText = command;
+            cmd.SetParameter("@schema", table.Schema);
+            cmd.SetParameter("@table", table.SqlName);
+            cmd.SetParameter("@query", query);
             try
             {
                 var reader = cmd.ExecuteReader();
@@ -211,19 +214,27 @@ namespace MySqlConnector
             }
             catch (Exception ex)
             {
-                throw new MySqlConnectorException($"ExecuteReader returned error on Select Query ({query})", ex);
+                throw new MySqlConnectorException($"ExecuteReader returned error on Select Query ({command})", ex);
             }
         }
-        
+
         bool ISQL.Delete(Table table, Dictionary<string, object> keys)
         {
-            var command = $"DELETE FROM {table.SqlName} " +
-                          $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}";
+            const string command = "DELETE FROM @schema.@table WHERE @where";
+
+            var cmd = MysqlManager.CreateTransaction();
+            cmd.CommandText = command;
+            cmd.SetParameter("@schema", table.Schema);
+            cmd.SetParameter("@table", table.SqlName);
+            cmd.SetParameter("@where", keys.Join(" AND ", pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"));
             try
             {
-                var cmd = MysqlManager.GetConn().CreateCommand();
-                cmd.CommandText = command;
-                return cmd.ExecuteNonQuery() == 1;
+                var rows = cmd.ExecuteNonQuery();
+                if (rows > 1)
+                    cmd.Transaction.Rollback();
+                else
+                    cmd.Transaction.Commit();
+                return rows == 1;
             }
             catch (Exception ex)
             {
@@ -303,11 +314,12 @@ namespace MySqlConnector
             {
                 decimal @decimal => @decimal.ToString(CultureInfo.InvariantCulture),
                 string @string => $"'{@string.Replace("'", "\\'").Replace(";", "\\;")}'",
-                _ => value?.ToString()
+                DateTime dateTime => $"{dateTime.ToSql()}",
+                _ => value.ToString()
             };
         }
 
-        
+
 
 
 

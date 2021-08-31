@@ -169,7 +169,9 @@ namespace MySqlConnector
                     }
                 }
                 query = "ALTER TABLE @schema.@table " + fieldChanges + (fieldChanges==""?"":",");
-                query += " DROP PRIMARY KEY, ADD PRIMARY KEY (@onlykeys)";
+                if (keyTableSchemata.Count > 0)
+                    query += " DROP PRIMARY KEY";
+                query += " ADD PRIMARY KEY (@onlykeys)";
             }
 
             var cmd = MysqlManager.CreateTransaction();
