@@ -6,16 +6,16 @@ namespace MySqlConnector
 {
     public class SQLInjectionProtect
     {
-        private static List<string> restrictKeyWords;
+        private static List<string> _restrictKeyWords;
 
         static SQLInjectionProtect()
         {
-            restrictKeyWords = new List<string>();
-            restrictKeyWords.Add("SELECT");
-            restrictKeyWords.Add("WHERE");
-            restrictKeyWords.Add("FROM");
-            restrictKeyWords.Add("JOIN");
-            restrictKeyWords.Add("ON");
+            _restrictKeyWords = new List<string>();
+            _restrictKeyWords.Add("SELECT");
+            _restrictKeyWords.Add("WHERE");
+            _restrictKeyWords.Add("FROM");
+            _restrictKeyWords.Add("JOIN");
+            _restrictKeyWords.Add("ON");
         }
         public static void CheckParameter(string str)
         {

@@ -4,19 +4,22 @@ using System.Data;
 using System.Linq;
 using MySql.Data.MySqlClient;
 using Persistence;
+using Nullable = Persistence.Nullable;
 
 namespace MySqlConnector
 {
-    internal static class DbExecutor
+    internal class DbExecutor
     {
-        public static void SetParameter(this MySqlCommand command, string parameter, object value)
+        private MysqlManager _mysqlManager;
+
+        public DbExecutor(MysqlManager mysqlManager)
         {
-            command.CommandText = command.CommandText.Replace(parameter, value.ToString());
+            _mysqlManager = mysqlManager;
         }
 
-        private static bool IndexExist(string table, string schema, string index)
+        private bool IndexExist(string table, string schema, string index)
         {
-            var cmd = MysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.GetConn().CreateCommand();
             cmd.CommandText =
                $"SELECT * FROM INFORMATION_SCHEMA.STATISTICS  WHERE TABLE_NAME = '{table}' AND INDEX_NAME = '{index}' AND INDEX_SCHEMA='{schema}'";
             MySqlDataReader reader = null;
@@ -34,10 +37,10 @@ namespace MySqlConnector
                 reader?.Close();
             }
         }
-        public static List<KEY_TABLE_SCHEMA> LoadTableKeys(string table, string schema)
+        public List<KEY_TABLE_SCHEMA> LoadTableKeys(string table, string schema)
         {
             var ret = new List<KEY_TABLE_SCHEMA>();
-            var cmd = MysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.GetConn().CreateCommand();
             var command =
                 "SELECT K.TABLE_NAME, K.COLUMN_NAME, COL.DATA_TYPE, COL.COLUMN_TYPE, K.CONSTRAINT_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME " +
                 "FROM INFORMATION_SCHEMA.COLUMNS COL JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE K " +
@@ -77,10 +80,10 @@ namespace MySqlConnector
             return ret;
         }
 
-        public static List<COLUMN_TABLE_SCHEMA> LoadTableColumns(string table, string schema)
+        public List<COLUMN_TABLE_SCHEMA> LoadTableColumns(string table, string schema)
         {
             var ret = new List<COLUMN_TABLE_SCHEMA>();
-            var cmd = MysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.GetConn().CreateCommand();
             var command =
                 "SELECT COLUMN_NAME, COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS " +
                 $"WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table}'";
@@ -114,7 +117,7 @@ namespace MySqlConnector
             return ret;
         }
 
-        public static bool UpdateField(Table table, Field field, List<COLUMN_TABLE_SCHEMA> tableCols)
+        public bool UpdateField(Table table, Field field, List<COLUMN_TABLE_SCHEMA> tableCols)
         {
             string query;
             if (tableCols.Count == 0)
@@ -124,7 +127,7 @@ namespace MySqlConnector
             else
                 query = "ALTER TABLE @schema.@table ADD COLUMN @field";
 
-            var cmd = MysqlManager.CreateTransaction();
+            var cmd = _mysqlManager.CreateTransaction();
             cmd.CommandText = query;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -144,7 +147,7 @@ namespace MySqlConnector
             return true;
         }
 
-        public static bool UpdatePrimaryKeys(Table table, List<PrimaryKey> primaryKeys,
+        public bool UpdatePrimaryKeys(Table table, List<PrimaryKey> primaryKeys,
             List<COLUMN_TABLE_SCHEMA> tableCols, List<KEY_TABLE_SCHEMA> keyTableSchemata)
         {
             string query;
@@ -174,7 +177,7 @@ namespace MySqlConnector
                 query += " ADD PRIMARY KEY (@onlykeys)";
             }
 
-            var cmd = MysqlManager.CreateTransaction();
+            var cmd = _mysqlManager.CreateTransaction();
             cmd.CommandText = query;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -196,7 +199,7 @@ namespace MySqlConnector
             return true;
         }
 
-        private static object BuildField(Field field)
+        private object BuildField(Field field)
         {
             var str = $"{field.SqlName} {MySqlProtocol.GetSqlFieldType(field)} ";
             if (field.DefaultValue != null)
@@ -204,7 +207,7 @@ namespace MySqlConnector
             return str;
         }
 
-        private static string BuildPkField(PrimaryKey key)
+        private string BuildPkField(PrimaryKey key)
         {
             var str = $"{key.SqlName} {MySqlProtocol.GetSqlFieldType(key)} ";
             str += key.Nullable.ToSql();
@@ -215,17 +218,17 @@ namespace MySqlConnector
             return str;
         }
 
-        private static string BuildFkField(KeyValuePair<string, Field> link, Relationship relationship)
+        private string BuildFkField(KeyValuePair<string, Field> link, Relationship relationship)
         {
             var str = $"{link.Key} {MySqlProtocol.GetSqlFieldType(link.Value)} ";
             str += relationship.Nullable.ToSql();
-            if (link.Value.DefaultValue != null)
+            if (link.Value.DefaultValue != null && relationship.Nullable == Nullable.NotNull)
                 str += " DEFAULT " + MySqlProtocol._ConvertValueToString(link.Value.DefaultValue);
             return str;
         }
 
 
-        public static bool UpdateForeignKeys(Table table, Relationship relationship, List<COLUMN_TABLE_SCHEMA> tableCols,
+        public bool UpdateForeignKeys(Table table, Relationship relationship, List<COLUMN_TABLE_SCHEMA> tableCols,
             List<KEY_TABLE_SCHEMA> keys)
         {
             var query = "";
@@ -248,7 +251,7 @@ namespace MySqlConnector
                 query += "ALTER TABLE @schema.@table @fieldChanges" +
                          "ADD CONSTRAINT @fk_name FOREIGN KEY (@onlyfields) REFERENCES @schema.@ref_table(@ref_field) @options";
 
-            var cmd = MysqlManager.CreateTransaction();
+            var cmd = _mysqlManager.CreateTransaction();
             cmd.CommandText = query;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -277,9 +280,9 @@ namespace MySqlConnector
             return true;
         }
 
-        public static bool HasRows(string query)
+        public bool HasRows(string query)
         {
-            var cmd = MysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.GetConn().CreateCommand();
             cmd.CommandText = query;
             MySqlDataReader reader = null;
             try
@@ -298,7 +301,7 @@ namespace MySqlConnector
             }
         }
 
-        public static void Execute(MySqlCommand cmd)
+        public void Execute(MySqlCommand cmd)
         {
             try
             {
@@ -314,12 +317,12 @@ namespace MySqlConnector
             }
         }
 
-        public static void ExecuteScript(string query)
+        public void ExecuteScript(string query)
         {
             try
             {
                 var script = new MySqlScript(query);
-                script.Connection = MysqlManager.GetConn();
+                script.Connection = _mysqlManager.GetConn();
                 script.Delimiter = "//";
                 script.Execute();
             }

@@ -4,13 +4,13 @@ using MySql.Data.MySqlClient;
 
 namespace MySqlConnector
 {
-    internal static class MysqlManager
+    internal class MysqlManager
     {
-        private static MySqlClientFactory _factory;
-        private static MySqlConnection _connection;
-        private static string MySqlString;
+        private MySqlConnection _connection;
+        internal Settings Settings;
+        private string MySqlString;
 
-        public static void Init()
+        public void Init()
         {
             MySqlString = new MySqlConnectionStringBuilder
             {
@@ -23,7 +23,7 @@ namespace MySqlConnector
                 AllowUserVariables = true,
             }.ConnectionString;
         }
-        public static MySqlConnection GetConn()
+        public MySqlConnection GetConn()
         {
             if (_connection != null) return _connection;
             if (MySqlString == null)
@@ -35,7 +35,7 @@ namespace MySqlConnector
             {
                 Connect();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 //MessageBox.Show($"Erro ao se conectar com {MySqlString}: {ex}");
                 Environment.Exit(2);
@@ -43,13 +43,13 @@ namespace MySqlConnector
             return _connection;
         }
 
-        private static void Connect()
+        private void Connect()
         {
             _connection = new MySqlConnection(MySqlString);
             _connection?.Open();
         }
         
-        public static bool Execute(string query)
+        public bool Execute(string query)
         {
             try
             {
@@ -67,7 +67,7 @@ namespace MySqlConnector
         }
 
 
-        public static int Result(string query)
+        public int Result(string query)
         {
             try
             {
@@ -86,7 +86,7 @@ namespace MySqlConnector
             return 1;
         }
 
-        public static MySqlCommand CreateTransaction()
+        public MySqlCommand CreateTransaction()
         {
             var command = GetConn().CreateCommand();
             command.Transaction = GetConn().BeginTransaction();

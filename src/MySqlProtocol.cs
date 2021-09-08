@@ -11,8 +11,10 @@ namespace MySqlConnector
 {
     public class MySqlProtocol : ISQL
     {
-        public string DefaultSchema => Settings.Database;
-
+        private readonly DbExecutor _executor;
+        private readonly MysqlManager _mysqlManager;
+        private ISQL _isqlImplementation;
+        public string DefaultSchema => _mysqlManager.Settings.Database;
         public bool ForwardEngineer { get; set; }
         public bool SkipVerification { get; set; }
 
@@ -24,14 +26,17 @@ namespace MySqlConnector
             Null,
         }
 
-        public MySqlProtocol()
+        public MySqlProtocol(string cfgPath)
         {
-            MysqlManager.Init();
+            _mysqlManager = new MysqlManager();
+            _executor = new DbExecutor(_mysqlManager);
+            _mysqlManager.Settings = new Settings(cfgPath);
+            _mysqlManager.Init();
         }
 
         bool ISQL.ExistTable(Table t)
         {
-            var cmd = MysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.GetConn().CreateCommand();
             cmd.CommandText =
                 $"SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=\"{t.Schema}\" AND TABLE_NAME=\"{t.SqlName}\"";
             using var reader = cmd.ExecuteReader();
@@ -40,7 +45,7 @@ namespace MySqlConnector
 
         DbDataReader ISQL.LoadTable(Table table)
         {
-            var cmd = MysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.GetConn().CreateCommand();
             cmd.CommandText = $"SHOW COLUMNS FROM {table.Schema}.{table.SqlName}";
             try
             {
@@ -57,7 +62,7 @@ namespace MySqlConnector
         bool ISQL.ValidateField(Table table, Field field)
         {
             if (SkipVerification) return true;
-            var tableCols = DbExecutor.LoadTableColumns(table.SqlName, table.Schema);
+            var tableCols = _executor.LoadTableColumns(table.SqlName, table.Schema);
             var sch = tableCols.FirstOrDefault(schema =>
                 schema.COLUMN_NAME.Equals(field.SqlName));
             if (sch != default &&
@@ -66,20 +71,15 @@ namespace MySqlConnector
                 return true;
             }
 
-            if (ForwardEngineer)
-            {
-                return DbExecutor.UpdateField(table, field, tableCols);
-            }
-
-            return false;
+            return ForwardEngineer && _executor.UpdateField(table, field, tableCols);
         }
 
 
         bool ISQL.ValidadeForeignKeys(Table table, Relationship relationship)
         {
             if (SkipVerification) return true;
-            var tableCols = DbExecutor.LoadTableColumns(table.SqlName, table.Schema);
-            var keys = DbExecutor.LoadTableKeys(table.SqlName, table.Schema);
+            var tableCols = _executor.LoadTableColumns(table.SqlName, table.Schema);
+            var keys = _executor.LoadTableKeys(table.SqlName, table.Schema);
 
             foreach (var (name, field) in relationship.Links)
             {
@@ -89,18 +89,18 @@ namespace MySqlConnector
                                      key.COLUMN_TYPE.SQLEquals(GetSqlFieldType(field)) &&
                                      key.COLUMN_NAME.SQLEquals(name)))
                 {
-                    return ForwardEngineer && DbExecutor.UpdateForeignKeys(table, relationship, tableCols, keys);
+                    return ForwardEngineer && _executor.UpdateForeignKeys(table, relationship, tableCols, keys);
                 }
             }
 
-            return false;
+            return true;
         }
 
         bool ISQL.ValidatePrimaryKeys(Table table, List<PrimaryKey> primaryKeys)
         {
             if (SkipVerification) return true;
-            var tableCols = DbExecutor.LoadTableColumns(table.SqlName, table.Schema);
-            var keys = DbExecutor.LoadTableKeys(table.SqlName, table.Schema)
+            var tableCols = _executor.LoadTableColumns(table.SqlName, table.Schema);
+            var keys = _executor.LoadTableKeys(table.SqlName, table.Schema)
                 .Where(key => key.CONSTRAINT_NAME == "PRIMARY").ToList();
             foreach (var pk in primaryKeys)
             {
@@ -109,7 +109,7 @@ namespace MySqlConnector
                     !keys.Any(key => key.COLUMN_TYPE.SQLEquals(GetSqlFieldType(pk)) &&
                                      key.COLUMN_NAME.SQLEquals(pk.SqlName)))
                 {
-                    return ForwardEngineer && DbExecutor.UpdatePrimaryKeys(table, primaryKeys, tableCols, keys);
+                    return ForwardEngineer && _executor.UpdatePrimaryKeys(table, primaryKeys, tableCols, keys);
                 }
             }
 
@@ -120,7 +120,7 @@ namespace MySqlConnector
         {
             var command =  "UPDATE @schema.@table SET @fieldAndValue WHERE(@keyAndValue)";
             
-            var cmd = MysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.GetConn().CreateCommand();
             cmd.CommandText = command;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -142,7 +142,7 @@ namespace MySqlConnector
         {
             var command = "INSERT INTO @schema.@table (@onlyFields) VALUES(@onlyValues) "+
                           "ON DUPLICATE KEY UPDATE @fieldEqualsValue";
-            var cmd = MysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.GetConn().CreateCommand();
             cmd.CommandText = command;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -150,7 +150,7 @@ namespace MySqlConnector
             cmd.SetParameter("@onlyValues", fields.Join(",", pair => _ConvertValueToString(pair.Value)));
             cmd.SetParameter("@fieldEqualsValue", fields.Join(",", pair => $"{pair.Key}={_ConvertValueToString(pair.Value)}"));
 
-            Console.WriteLine(cmd.CommandText);
+            //Console.WriteLine(cmd.CommandText);
             try
             {
                 var exec = cmd.ExecuteNonQuery();
@@ -162,31 +162,13 @@ namespace MySqlConnector
             }
         }
 
-        DbDataReader ISQL.Select(Table table, Dictionary<string, object> keys)
+        DbDataReader ISQL.Select(Table table, Dictionary<string, object> keys, uint offset, uint length)
         {
-            var cmd = MysqlManager.GetConn().CreateCommand();
-            var command =
-                $"SELECT *FROM {table.Schema}.{table.SqlName} " +
-                $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}";
-            cmd.CommandText = command;
-            try
-            {
-                var reader = cmd.ExecuteReader();
-                return reader;
-            }
-            catch (Exception ex)
-            {
-                throw new MySqlConnectorException("ExecuteReader returned error on Select", ex);
-            }
-        }
-
-        DbDataReader ISQL.Select(Table table, Dictionary<string, object> keys, long first, long count)
-        {
-            var cmd = MysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.GetConn().CreateCommand();
             var command =
                 $"SELECT *FROM {table.SqlName} " +
-                $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}" +
-                $"LIMITED({first},{count})";
+                $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}"+
+                $"LIMIT {offset},{length}";;
             cmd.CommandText = command;
             try
             {
@@ -199,10 +181,10 @@ namespace MySqlConnector
             }
         }
 
-        DbDataReader ISQL.SelectWhereQuery(Table table, string query)
+        DbDataReader ISQL.SelectWhereQuery(Table table, string query, uint offset, uint length)
         {
-            var cmd = MysqlManager.GetConn().CreateCommand();
-            var command = $"SELECT *FROM @schema.@table WHERE @query";
+            var cmd = _mysqlManager.GetConn().CreateCommand();
+            var command = $"SELECT *FROM @schema.@table WHERE @query LIMIT {offset},{length}";
             cmd.CommandText = command;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -214,7 +196,30 @@ namespace MySqlConnector
             }
             catch (Exception ex)
             {
-                throw new MySqlConnectorException($"ExecuteReader returned error on Select Query ({command})", ex);
+                throw new MySqlConnectorException($"ExecuteReader returned error on Select Query ({cmd.CommandText})", ex);
+            }
+        }
+
+        DbDataReader ISQL.ExecuteProcedure(string procedureName, Dictionary<string,object> parameters)
+        {
+            var cmd = _mysqlManager.GetConn().CreateCommand();
+            cmd.CommandType = CommandType.StoredProcedure;
+            cmd.CommandText = procedureName;
+            
+            foreach (var (key,value) in parameters)
+            {
+                cmd.Parameters.Add(new MySqlParameter(key,value));
+            }
+
+            try
+            {
+                cmd.Prepare();
+                var reader = cmd.ExecuteReader();
+                return reader;
+            }
+            catch(Exception ex)
+            {
+                throw new MySqlConnectorException($"ExecuteReader returned error on Call Procedure {procedureName}", ex);
             }
         }
 
@@ -222,7 +227,7 @@ namespace MySqlConnector
         {
             const string command = "DELETE FROM @schema.@table WHERE @where";
 
-            var cmd = MysqlManager.CreateTransaction();
+            var cmd = _mysqlManager.CreateTransaction();
             cmd.CommandText = command;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -242,16 +247,30 @@ namespace MySqlConnector
             }
         }
 
-        long ISQL.SelectCount(Table table, Dictionary<string, object> keys)
+        uint ISQL.SelectCount(Table table, Dictionary<string, object> keys)
         {
-            var cmd = MysqlManager.GetConn().CreateCommand();
-            var command = $"SELECT count(*) {table.SqlName}" +
+            var cmd = _mysqlManager.GetConn().CreateCommand();
+            var command = $"SELECT COUNT(*) {table.SqlName}" +
                           $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}";
             cmd.CommandText = command;
             var reader = cmd.ExecuteReader();
             if (reader.Read())
             {
-                return reader.GetInt64(0);
+                return reader.GetUInt32(0);
+            }
+
+            return 0;
+        }        
+        
+        uint ISQL.SelectCountWhereQuery(Table table, string likeQuery)
+        {
+            var cmd = _mysqlManager.GetConn().CreateCommand();
+            var command = $"SELECT COUNT(*) {table.SqlName} WHERE {likeQuery}";
+            cmd.CommandText = command;
+            var reader = cmd.ExecuteReader();
+            if (reader.Read())
+            {
+                return reader.GetUInt32(0);
             }
 
             return 0;
@@ -271,14 +290,14 @@ namespace MySqlConnector
         {
             var query = $"SELECT * FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA='{table.Schema}' " +
                         $"AND EVENT_OBJECT_TABLE='{table.SqlName}' AND TRIGGER_NAME = '{triggerName}'";
-            return DbExecutor.HasRows(query);
+            return _executor.HasRows(query);
         }
 
         void ISQL.CreateTrigger(Table table, string sqlTrigger, string triggerName, ISQL.SqlTriggerType sqlTriggerType)
         {
             var query = $"\nCREATE TRIGGER {triggerName} {sqlTriggerType.ToString().Replace("_", " ")} ON {table.SqlName} FOR EACH ROW BEGIN " +
                                 sqlTrigger + "//";
-            DbExecutor.ExecuteScript(query);
+            _executor.ExecuteScript(query);
         }
 
         string ISQL.ConvertValueToString(object value) => _ConvertValueToString(value);

@@ -1,11 +1,17 @@
 using System;
 using System.Collections.Generic;
+using MySql.Data.MySqlClient;
 using Nullable = Persistence.Nullable;
 
 namespace MySqlConnector
 {
     internal static class Tools
     {
+        public static void SetParameter(this MySqlCommand command, string parameter, object value)
+        {
+            command.CommandText = command.CommandText.Replace(parameter, value.ToString());
+        }
+        
         public static void Do<T>(this IEnumerable<T> sequence, Action<T> action)
         {
             if (sequence == null)
