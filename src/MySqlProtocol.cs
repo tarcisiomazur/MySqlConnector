@@ -12,11 +12,19 @@ namespace MySqlConnector
     public class MySqlProtocol : ISQL
     {
         private readonly DbExecutor _executor;
-        private readonly MysqlManager _mysqlManager;
+        internal readonly MysqlManager _mysqlManager;
         private ISQL _isqlImplementation;
         public string DefaultSchema => _mysqlManager.Settings.Database;
-        public bool ForwardEngineer { get; set; }
-        public bool SkipVerification { get; set; }
+        public bool ForwardEngineer
+        {
+            get => _mysqlManager.Settings.ForwardEngineer;
+            set => _mysqlManager.Settings.ForwardEngineer = value;
+        }
+        public bool SkipVerification
+        {
+            get => _mysqlManager.Settings.SkipVerification;
+            set => _mysqlManager.Settings.SkipVerification = value;
+        }
 
         public enum Key
         {
@@ -167,8 +175,8 @@ namespace MySqlConnector
             var cmd = _mysqlManager.GetConn().CreateCommand();
             var command =
                 $"SELECT *FROM {table.SqlName} " +
-                $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))}"+
-                $"LIMIT {offset},{length}";;
+                $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))} "+
+                $"LIMIT {offset},{length}";
             cmd.CommandText = command;
             try
             {

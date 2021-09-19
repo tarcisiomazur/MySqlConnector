@@ -38,7 +38,7 @@ namespace MySqlConnector
             catch (Exception)
             {
                 //MessageBox.Show($"Erro ao se conectar com {MySqlString}: {ex}");
-                Environment.Exit(2);
+                //Environment.Exit(2);
             }
             return _connection;
         }

@@ -3,17 +3,20 @@
         <TargetFramework>net5.0-windows</TargetFramework>
         <LangVersion>10</LangVersion>
     </PropertyGroup>
+    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+      <DebugType>none</DebugType>
+    </PropertyGroup>
 
     <ItemGroup>
       <PackageReference Include="MySql.Data" Version="8.0.25" />
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\Persistence\Persistence.csproj" />
+      <Compile Remove="MySqlConnector\MySqlReader.cs" />
     </ItemGroup>
 
     <ItemGroup>
-      <Compile Remove="MySqlConnector\MySqlReader.cs" />
+      <ProjectReference Include="..\Persistence\Persistence.csproj" />
     </ItemGroup>
 
 </Project>

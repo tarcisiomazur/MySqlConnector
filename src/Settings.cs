@@ -17,6 +17,8 @@ namespace MySqlConnector
         internal ushort Port { get; set; }
         internal string UserID { get; set; }
         internal string Password { get; set; }
+        internal bool ForwardEngineer { get; set; }
+        internal bool SkipVerification { get; set; }
 
         private void Load(string cfgPath)
         {
