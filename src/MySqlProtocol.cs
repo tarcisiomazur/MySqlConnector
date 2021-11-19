@@ -40,6 +40,60 @@ namespace MySqlConnector
             _executor = new DbExecutor(_mysqlManager);
             _mysqlManager.Settings = new Settings(cfgPath);
             _mysqlManager.Init();
+            ShowTriggers();
+        }
+
+        private void ShowTables()
+        {
+            var ret = new List<string>();
+            var cmd = _mysqlManager.GetConn().CreateCommand();
+            cmd.CommandText = "show tables from sismaper";
+            var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                ret.Add(reader.GetString(0));
+            }
+            reader.Close();
+            
+            foreach (var s in ret)
+            {
+                cmd.CommandText = "show create table sismaper." + s;
+                try
+                {
+                    reader = cmd.ExecuteReader();
+                    reader.Read();
+                    var str = reader.GetString(1);
+                    str = str.Remove(str.IndexOf("ENGINE=", StringComparison.CurrentCultureIgnoreCase));
+                    Console.WriteLine(str + ";\n");
+                    reader.Close();
+                }
+                catch
+                {
+                    
+                }
+            }
+
+        }
+        private void ShowTriggers()
+        {
+            var cmd = _mysqlManager.GetConn().CreateCommand();
+            cmd.CommandText = "show triggers from sismaper";
+            var reader = cmd.ExecuteReader();
+            Console.WriteLine("DELIMITER $$");
+            while (reader.Read())
+            {
+                var trg = reader.GetString("Trigger");
+                if(trg.Contains("Version", StringComparison.CurrentCultureIgnoreCase))
+                    continue;
+                var stmt = reader.GetString("Statement");
+                var ev = reader.GetString("Event");
+                var ti = reader.GetString("Timing");
+                var tb = reader.GetString("Table");
+                Console.WriteLine($"CREATE TRIGGER `{trg}` {ti} {ev} ON `{tb}` FOR EACH ROW\n{stmt}$$\n");
+            }
+            Console.WriteLine("DELIMITER ;");
+            reader.Close();
+
         }
 
         bool ISQL.ExistTable(Table t)
@@ -231,6 +285,25 @@ namespace MySqlConnector
             }
         }
 
+        DbDataReader ISQL.SelectView(string name, string schema)
+        {
+            var cmd = _mysqlManager.GetConn().CreateCommand();
+            cmd.CommandText = "SELECT * FROM @schema.@table";
+            cmd.SetParameter("@schema", schema);
+            cmd.SetParameter("@table", name);
+            
+            try
+            {
+                cmd.Prepare();
+                var reader = cmd.ExecuteReader();
+                return reader;
+            }
+            catch(Exception ex)
+            {
+                throw new MySqlConnectorException($"ExecuteReader returned error on SelectView {schema}.{name}", ex);
+            }
+        }
+
         bool ISQL.Delete(Table table, Dictionary<string, object> keys)
         {
             const string command = "DELETE FROM @schema.@table WHERE @where";
@@ -303,6 +376,7 @@ namespace MySqlConnector
 
         void ISQL.CreateTrigger(Table table, string sqlTrigger, string triggerName, ISQL.SqlTriggerType sqlTriggerType)
         {
+            if (ForwardEngineer == false) return;
             var query = $"\nCREATE TRIGGER {triggerName} {sqlTriggerType.ToString().Replace("_", " ")} ON {table.SqlName} FOR EACH ROW BEGIN " +
                                 sqlTrigger + "//";
             _executor.ExecuteScript(query);
