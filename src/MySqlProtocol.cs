@@ -200,7 +200,7 @@ namespace MySqlConnector
             }
         }
 
-        long ISQL.InsertOrUpdate(Table table, Dictionary<string, object> fields)
+        long ISQL.Insert(Table table, Dictionary<string, object> fields)
         {
             var command = "INSERT INTO @schema.@table (@onlyFields) VALUES(@onlyValues) "+
                           "ON DUPLICATE KEY UPDATE @fieldEqualsValue";
