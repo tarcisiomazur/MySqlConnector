@@ -40,7 +40,7 @@ namespace MySqlConnector
             _executor = new DbExecutor(_mysqlManager);
             _mysqlManager.Settings = new Settings(cfgPath);
             _mysqlManager.Init();
-            ShowTriggers();
+            //ShowTriggers();
         }
 
         private void ShowTables()
