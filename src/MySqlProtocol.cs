@@ -414,6 +414,7 @@ namespace MySqlConnector
             return value switch
             {
                 decimal @decimal => @decimal.ToString(CultureInfo.InvariantCulture),
+                double @double => @double.ToString(CultureInfo.InvariantCulture),
                 string @string => $"'{@string.Replace("'", "\\'").Replace(";", "\\;")}'",
                 DateTime dateTime => $"{dateTime.ToSql()}",
                 _ => value.ToString()
