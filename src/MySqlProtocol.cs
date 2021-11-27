@@ -15,6 +15,17 @@ namespace MySqlConnector
         internal readonly MysqlManager _mysqlManager;
         private ISQL _isqlImplementation;
         public string DefaultSchema => _mysqlManager.Settings.Database;
+        public event EventHandler Connected
+        {
+            add => _mysqlManager.Connected += value;
+            remove => _mysqlManager.Connected -= value;
+        }
+        public event EventHandler Disconnected
+        {
+            add => _mysqlManager.Disconnected += value;
+            remove => _mysqlManager.Disconnected -= value;
+        }
+        
         public bool ForwardEngineer
         {
             get => _mysqlManager.Settings.ForwardEngineer;
@@ -178,11 +189,11 @@ namespace MySqlConnector
             return true;
         }
 
-        long ISQL.Update(Table table, Dictionary<string, object> fields, Dictionary<PropColumn, object> keys)
+        long ISQL.Update(Table table, Dictionary<string, object> fields, Dictionary<PropColumn, object> keys, ref IDbTransaction dbTransaction)
         {
             var command =  "UPDATE @schema.@table SET @fieldAndValue WHERE(@keyAndValue)";
             
-            var cmd = _mysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.CreateCommand(ref dbTransaction);
             cmd.CommandText = command;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -200,19 +211,17 @@ namespace MySqlConnector
             }
         }
 
-        long ISQL.Insert(Table table, Dictionary<string, object> fields)
+        long ISQL.Insert(Table table, Dictionary<string, object> fields, ref IDbTransaction transaction)
         {
             var command = "INSERT INTO @schema.@table (@onlyFields) VALUES(@onlyValues) "+
                           "ON DUPLICATE KEY UPDATE @fieldEqualsValue";
-            var cmd = _mysqlManager.GetConn().CreateCommand();
+            var cmd = _mysqlManager.CreateCommand(ref transaction);
             cmd.CommandText = command;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
             cmd.SetParameter("@onlyFields", string.Join(",", fields.Keys));
             cmd.SetParameter("@onlyValues", fields.Join(",", pair => _ConvertValueToString(pair.Value)));
             cmd.SetParameter("@fieldEqualsValue", fields.Join(",", pair => $"{pair.Key}={_ConvertValueToString(pair.Value)}"));
-
-            //Console.WriteLine(cmd.CommandText);
             try
             {
                 var exec = cmd.ExecuteNonQuery();
@@ -304,11 +313,11 @@ namespace MySqlConnector
             }
         }
 
-        bool ISQL.Delete(Table table, Dictionary<string, object> keys)
+        bool ISQL.Delete(Table table, Dictionary<string, object> keys, ref IDbTransaction dbTransaction)
         {
             const string command = "DELETE FROM @schema.@table WHERE @where";
 
-            var cmd = _mysqlManager.CreateTransaction();
+            var cmd = _mysqlManager.CreateCommand(ref dbTransaction);
             cmd.CommandText = command;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -316,10 +325,6 @@ namespace MySqlConnector
             try
             {
                 var rows = cmd.ExecuteNonQuery();
-                if (rows > 1)
-                    cmd.Transaction.Rollback();
-                else
-                    cmd.Transaction.Commit();
                 return rows == 1;
             }
             catch (Exception ex)
@@ -416,6 +421,7 @@ namespace MySqlConnector
                 decimal @decimal => @decimal.ToString(CultureInfo.InvariantCulture),
                 double @double => @double.ToString(CultureInfo.InvariantCulture),
                 string @string => $"'{@string.Replace("'", "\\'").Replace(";", "\\;")}'",
+                char @char => $"'{@char}'",
                 DateTime dateTime => $"{dateTime.ToSql()}",
                 _ => value.ToString()
             };

@@ -127,7 +127,7 @@ namespace MySqlConnector
             else
                 query = "ALTER TABLE @schema.@table ADD COLUMN @field";
 
-            var cmd = _mysqlManager.CreateTransaction();
+            var cmd = _mysqlManager.CreateCommand();
             cmd.CommandText = query;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -177,7 +177,7 @@ namespace MySqlConnector
                 query += " ADD PRIMARY KEY (@onlykeys)";
             }
 
-            var cmd = _mysqlManager.CreateTransaction();
+            var cmd = _mysqlManager.CreateCommand();
             cmd.CommandText = query;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
@@ -251,7 +251,7 @@ namespace MySqlConnector
                 query += "ALTER TABLE @schema.@table @fieldChanges" +
                          "ADD CONSTRAINT @fk_name FOREIGN KEY (@onlyfields) REFERENCES @schema.@ref_table(@ref_field) @options";
 
-            var cmd = _mysqlManager.CreateTransaction();
+            var cmd = _mysqlManager.CreateCommand();
             cmd.CommandText = query;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
