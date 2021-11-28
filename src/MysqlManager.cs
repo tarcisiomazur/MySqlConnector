@@ -1,6 +1,8 @@
 using System;
 using System.Data;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Timers;
 using MySql.Data.MySqlClient;
 
 namespace MySqlConnector
@@ -10,66 +12,118 @@ namespace MySqlConnector
         private MySqlConnection _connection;
         internal Settings Settings;
         private string MySqlString;
-        internal event EventHandler Connected;
-        internal event EventHandler Disconnected;
+        internal event Action Connected;
+        internal event Action Disconnected;
+        internal event Action Reconnecting;
+        internal bool IsConnected { get; set; }
 
         public void Init()
         {
             MySqlString = new MySqlConnectionStringBuilder
             {
                 Server = Settings.Server,
-                Database = Settings.Database,
                 Port = Settings.Port,
                 UserID = Settings.UserID,
                 Password = Settings.Password,
                 SslMode = MySqlSslMode.Required,
                 Logging = true,
+                MaximumPoolSize = 1,
                 AllowUserVariables = true,
             }.ConnectionString;
+
+            if (!Settings.AutoReconnect) return;
+
+            if (Settings.MonitorIntervalTime > 0)
+            {
+                TestConnection();
+            }
         }
 
         public MySqlConnection GetConn()
         {
-            if (_connection != null) return _connection;
+            var retryConnection = 0;
             if (MySqlString == null)
             {
-                //MessageBox.Show("MySqlManager não inicializado");
                 Environment.Exit(5);
             }
 
-            try
+            var newConnection = new MySqlConnection(MySqlString);
+            while (true)
             {
-                Connect();
-            }
-            catch (Exception)
-            {
-                //MessageBox.Show($"Erro ao se conectar com {MySqlString}: {ex}");
-                //Environment.Exit(2);
-            }
+                try
+                {
+                    newConnection.Open();
+                    if (!IsConnected)
+                    {
+                        Connected?.Invoke();
+                        IsConnected = true;
+                    }
 
-            return _connection;
+                    return newConnection;
+                }
+                catch
+                {
+                    IsConnected = false;
+                    retryConnection++;
+                    Thread.Sleep(500);
+                }
+
+                switch (retryConnection)
+                {
+                    case 1:
+                        Disconnected?.Invoke();
+                        break;
+                    case > 5:
+                        Reconnecting?.Invoke();
+                        break;
+                }
+            }
         }
 
-        private void Connect()
+        private async Task TestConnection()
         {
             _connection = new MySqlConnection(MySqlString);
-            _connection.StateChange += ChangedState;
-            
-            _connection?.Open();
-        }
-
-        private void ChangedState(object sender, StateChangeEventArgs e)
-        {
-            Console.WriteLine(e.OriginalState + " " + e.CurrentState);
-            if (e.CurrentState == e.OriginalState) return;
-            switch (e.CurrentState)
+            var cmd = new MySqlCommand("SELECT 1", _connection);
+            while (true)
             {
-                case ConnectionState.Open:
-                    Connected?.Invoke(sender, EventArgs.Empty);
-                    break;
-                case ConnectionState.Closed:
-                    Disconnected?.Invoke(sender, EventArgs.Empty);
-                    break;
+                await Task.Delay(Settings.MonitorIntervalTime);
+                try
+                {
+                    _connection.Open();
+                    cmd.ExecuteNonQuery();
+                    _connection.Close();
+                    continue;
+                }
+                catch
+                {
+                    if (!Settings.AutoReconnect) continue;
+                }
+
+                try
+                {
+                    await _connection.OpenAsync();
+                }
+                catch
+                {
+                }
+
+                await Task.Delay(5000);
+                if (_connection.State != ConnectionState.Open)
+                {
+                    Reconnecting?.Invoke();
+                }
+
+                while (_connection.State != ConnectionState.Open)
+                {
+                    try
+                    {
+                        _connection.Open();
+                    }
+                    catch
+                    {
+                        await Task.Delay(5000);
+                    }
+                }
             }
         }
 
@@ -114,24 +168,30 @@ namespace MySqlConnector
         {
             return GetConn().CreateCommand();
         }
-        
+
         public MySqlCommand CreateCommand(ref IDbTransaction dbTransaction)
         {
-            var command = GetConn().CreateCommand();
-            if (dbTransaction is not MySqlTransaction or null)
+            if (dbTransaction is MySqlTransaction sqlDbTransaction)
             {
-                var task = GetConn().BeginTransactionAsync();
-                if (Task.WhenAny(task, Task.Delay(10000)).Result == task) {
-                    Console.WriteLine("terminei");
-                    dbTransaction = task.Result;
-                } else {
-                    Console.WriteLine("time out");
-                }
+                return sqlDbTransaction.Connection.CreateCommand();
             }
+
+            var conn = GetConn();
+            var command = conn.CreateCommand();
+            var task = conn.BeginTransactionAsync();
+            if (Task.WhenAny(task, Task.Delay(10000)).Result == task)
+            {
+                dbTransaction = task.Result;
+            }
+            else
+            {
+                Console.WriteLine("time out");
+            }
+
             command.Transaction = (MySqlTransaction) dbTransaction;
             return command;
         }
-        
+
         public MySqlCommand GetCommand()
         {
             var command = GetConn().CreateCommand();

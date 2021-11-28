@@ -35,6 +35,7 @@ namespace MySqlConnector
             finally
             {
                 reader?.Close();
+                cmd.Connection?.Close();
             }
         }
         public List<KEY_TABLE_SCHEMA> LoadTableKeys(string table, string schema)
@@ -65,8 +66,6 @@ namespace MySqlConnector
 
                     ret.Add(ts);
                 }
-
-                reader.Close();
             }
             catch (Exception ex)
             {
@@ -75,6 +74,7 @@ namespace MySqlConnector
             finally
             {
                 reader?.Close();
+                cmd.Connection?.Close();
             }
 
             return ret;
@@ -104,6 +104,7 @@ namespace MySqlConnector
                 }
 
                 reader.Close();
+                cmd.Connection?.Close();
             }
             catch (Exception ex)
             {
@@ -298,6 +299,7 @@ namespace MySqlConnector
             finally
             {
                 reader?.Close();
+                cmd.Connection?.Close();
             }
         }
 

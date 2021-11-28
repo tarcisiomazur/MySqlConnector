@@ -19,6 +19,8 @@ namespace MySqlConnector
         internal string Password { get; set; }
         internal bool ForwardEngineer { get; set; }
         internal bool SkipVerification { get; set; }
+        public int MonitorIntervalTime { get; set; }
+        public bool AutoReconnect { get; set; } = false;
 
         private void Load(string cfgPath)
         {
