@@ -13,7 +13,9 @@ namespace MySqlConnector
     {
         private readonly DbExecutor _executor;
         internal readonly MysqlManager _mysqlManager;
+
         public string DefaultSchema => _mysqlManager.Settings.Database;
+
         public bool IsConnected => _mysqlManager.IsConnected;
 
         public event Action Connected
@@ -100,9 +102,7 @@ namespace MySqlConnector
                     Console.WriteLine(str + ";\n");
                     reader.Close();
                 }
-                catch
-                {
-                }
+                catch { }
             }
 
             cmd.Connection?.Close();
@@ -181,7 +181,6 @@ namespace MySqlConnector
             return ForwardEngineer && _executor.UpdateField(table, field, tableCols);
         }
 
-
         bool ISQL.ValidadeForeignKeys(Table table, Relationship relationship)
         {
             if (SkipVerification) return true;
@@ -223,7 +222,7 @@ namespace MySqlConnector
             return true;
         }
 
-        long ISQL.Update(Table table, Dictionary<string, object> fields, Dictionary<PropColumn, object> keys,
+        long ISQL.Update(Table table, Dictionary<PropColumn, object> fields, Dictionary<PropColumn, object> keys,
             ref IDbTransaction dbTransaction)
         {
             var command = "UPDATE @schema.@table SET @fieldAndValue WHERE(@keyAndValue)";
@@ -233,7 +232,8 @@ namespace MySqlConnector
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
             cmd.SetParameter("@fieldAndValue",
-                fields.Join(",", pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"));
+                fields.Where(f =>f.Key is not Field{Updatable:false})
+                    .Join(",", pair => $"{pair.Key.SqlName} = {_ConvertValueToString(pair.Value)}"));
             cmd.SetParameter("@keyAndValue",
                 keys.Join(" AND ", pair => $"{pair.Key.SqlName} = {_ConvertValueToString(pair.Value)}"));
 
@@ -241,7 +241,8 @@ namespace MySqlConnector
             {
                 cmd.PrepareParameters();
                 var exec = cmd.ExecuteNonQuery();
-                return exec == 1 && table.DefaultPk ? cmd.LastInsertedId : exec;
+                Console.WriteLine($"Table: {table.Name} exec: {exec} lastInsert{cmd.LastInsertedId}");
+                return exec >= 1 && table.DefaultPk ? cmd.LastInsertedId : exec;
             }
             catch (MySqlException ex)
             {
@@ -249,7 +250,7 @@ namespace MySqlConnector
             }
         }
 
-        long ISQL.Insert(Table table, Dictionary<string, object> fields, ref IDbTransaction transaction)
+        long ISQL.Insert(Table table, Dictionary<PropColumn, object> fields, ref IDbTransaction transaction)
         {
             var command = "INSERT INTO @schema.@table (@onlyFields) VALUES(@onlyValues) " +
                           "ON DUPLICATE KEY UPDATE @fieldEqualsValue";
@@ -257,15 +258,17 @@ namespace MySqlConnector
             cmd.CommandText = command;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
-            cmd.SetParameter("@onlyFields", string.Join(",", fields.Keys));
-            cmd.SetParameter("@onlyValues", fields.Join(",", pair => _ConvertValueToString(pair.Value)));
+            cmd.SetParameter("@onlyFields", fields.Keys.Join(",", key=>key.SqlName));
+            cmd.SetParameter("@onlyValues", fields.Values.Join(",", value => _ConvertValueToString(value)));
             cmd.SetParameter("@fieldEqualsValue",
-                fields.Join(",", pair => $"{pair.Key}={_ConvertValueToString(pair.Value)}"));
+                fields.Where(f => f.Key is not Field {Updatable: false})
+                    .Join(",", pair => $"{pair.Key.SqlName}={_ConvertValueToString(pair.Value)}"));
             try
             {
                 cmd.PrepareParameters();
                 var exec = cmd.ExecuteNonQuery();
-                return exec == 1 && table.DefaultPk ? cmd.LastInsertedId : exec;
+                Console.WriteLine($"Table: {table.Name} exec: {exec} lastInsert{cmd.LastInsertedId}");
+                return exec >= 1 && table.DefaultPk ? cmd.LastInsertedId : exec;
             }
             catch (MySqlException ex)
             {
@@ -282,26 +285,28 @@ namespace MySqlConnector
             if (param.Keys != null)
             {
                 if (where.Length > 0) where += " AND ";
-                var join = string.Join(" AND ", param.Keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"));
+                var join = string.Join(" AND ",
+                    param.Keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"));
                 where += $"({join})";
             }
+
             if (where.Length > 0)
             {
                 command += "WHERE @where ";
                 cmd.SetParameter("@where", where);
             }
+
             if (param.Length is not null)
             {
                 command += "LIMIT @limit ";
                 cmd.SetParameter("@limit", param.Offset != null ? $"{param.Offset},{param.Length}" : param.Length);
             }
-            
+
             cmd.CommandText = command;
             cmd.SetParameter("@schema", param.Table.Schema);
             cmd.SetParameter("@table", param.Table.SqlName);
             try
             {
-                
                 cmd.PrepareParameters();
                 var reader = cmd.ExecuteReader();
                 return new MyReader(reader, cmd);
@@ -498,6 +503,7 @@ namespace MySqlConnector
     public class MyReader : IPReader
     {
         public MySqlConnection _connection;
+
         public DbDataReader DataReader { get; set; }
 
         public MyReader(DbDataReader dataReader, MySqlCommand cmd)
