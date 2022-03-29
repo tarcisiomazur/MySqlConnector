@@ -2,7 +2,6 @@ using System;
 using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Timers;
 using MySql.Data.MySqlClient;
 
 namespace MySqlConnector
@@ -27,7 +26,7 @@ namespace MySqlConnector
                 Password = Settings.Password,
                 SslMode = MySqlSslMode.Required,
                 Logging = true,
-                MaximumPoolSize = 1,
+                MaximumPoolSize = Settings.MaximumPoolSize,
                 AllowUserVariables = true,
             }.ConnectionString;
 
@@ -41,7 +40,6 @@ namespace MySqlConnector
 
         public MySqlConnection GetConn()
         {
-            var retryConnection = 0;
             if (MySqlString == null)
             {
                 Environment.Exit(5);
@@ -53,31 +51,38 @@ namespace MySqlConnector
                 try
                 {
                     newConnection.Open();
-                    if (!IsConnected)
+                    if (newConnection.State is ConnectionState.Open)
                     {
-                        Connected?.Invoke();
-                        IsConnected = true;
-                    }
+                        if (!IsConnected)
+                        {
+                            Connected?.Invoke();
+                            IsConnected = true;
+                        }
 
-                    return newConnection;
+                        return newConnection;
+                    }
                 }
                 catch
                 {
-                    IsConnected = false;
-                    retryConnection++;
-                    Thread.Sleep(500);
+                    Thread.Sleep(1000);
                 }
 
-                switch (retryConnection)
-                {
-                    case 1:
-                        Disconnected?.Invoke();
-                        break;
-                    case > 5:
-                        Reconnecting?.Invoke();
-                        break;
-                }
+                if (IsConnected)
+                    IsConnected = false;
+                else
+                    continue;
+                Disconnected?.Invoke();
+                if (Settings.AutoReconnect)
+                    Reconnecting?.Invoke();
             }
+        }
+
+        private async Task OnDisconnect()
+        {
+            Disconnected?.Invoke();
+            await Task.Delay(1000);
+            if (Settings.AutoReconnect)
+                Reconnecting?.Invoke();
         }
 
         private async Task TestConnection()
@@ -89,7 +94,8 @@ namespace MySqlConnector
                 await Task.Delay(Settings.MonitorIntervalTime);
                 try
                 {
-                    _connection.Open();
+                    if (_connection.State != ConnectionState.Open)
+                        _connection.Open();
                     cmd.ExecuteNonQuery();
                     _connection.Close();
                     continue;
@@ -107,9 +113,10 @@ namespace MySqlConnector
                 {
                 }
 
-                await Task.Delay(5000);
-                if (_connection.State != ConnectionState.Open)
+                if (_connection.State != ConnectionState.Open && IsConnected)
                 {
+                    Disconnected?.Invoke();
+                    await Task.Delay(1000);
                     Reconnecting?.Invoke();
                 }
 
@@ -123,6 +130,11 @@ namespace MySqlConnector
                     {
                         await Task.Delay(5000);
                     }
+                }
+
+                if (_connection.State == ConnectionState.Open)
+                {
+                    Connected?.Invoke();
                 }
             }
         }

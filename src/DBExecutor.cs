@@ -58,7 +58,8 @@ namespace MySqlConnector
                     var ts = new KEY_TABLE_SCHEMA();
                     foreach (var pi in typeof(KEY_TABLE_SCHEMA).GetProperties())
                     {
-                        if (!reader.IsDBNull(pi.Name))
+                        var x = reader[pi.Name];
+                        if (x is not DBNull)
                         {
                             pi.SetValue(ts, reader[pi.Name] ?? "");
                         }
@@ -135,14 +136,17 @@ namespace MySqlConnector
             cmd.SetParameter("@field", BuildField(field));
             try
             {
+                cmd.PrepareParameters();
                 cmd.ExecuteNonQuery();
-                cmd.Transaction.Commit();
             }
             catch (Exception ex)
             {
-                cmd.Transaction.Rollback();
                 throw new MySqlConnectorException($"Error on create table {table.SqlName} in database {table.Schema}",
                     ex);
+            }
+            finally
+            {
+                cmd.Connection?.Close();
             }
 
             return true;
@@ -182,19 +186,23 @@ namespace MySqlConnector
             cmd.CommandText = query;
             cmd.SetParameter("@schema", table.Schema);
             cmd.SetParameter("@table", table.SqlName);
-            cmd.SetParameter("@onlykeys", string.Join(',', primaryKeys.Select(key => key.SqlName)));
+            cmd.SetParameter("@onlykeys", string.Join(",", primaryKeys.Select(key => key.SqlName)));
             cmd.SetParameter("@keysAndType", string.Join(",", primaryKeys.Select(BuildPkField)));
             try
             {
+                cmd.PrepareParameters();
                 Console.WriteLine(cmd.CommandText);
                 cmd.ExecuteNonQuery();
-                cmd.Transaction.Commit();
             }
             catch (Exception ex)
             {
                 cmd.Transaction.Rollback();
                 throw new MySqlConnectorException($"Error on create table {table.SqlName} in database {table.Schema}",
                     ex);
+            }
+            finally
+            {
+                cmd.Connection?.Close();
             }
 
             return true;
@@ -263,12 +271,12 @@ namespace MySqlConnector
             cmd.SetParameter("@ref_field", string.Join(",", relationship.Links.Select(link=>link.Value.SqlName)));
             cmd.SetParameter("@fieldChanges", fieldChanges);
             cmd.SetParameter("@options", $"ON UPDATE {relationship.OnUpdate} ON DELETE {relationship.OnDelete}");
-            
+
             try
             {
+                cmd.PrepareParameters();
                 Console.WriteLine(cmd.CommandText);
                 cmd.ExecuteNonQuery();
-                cmd.Transaction.Commit();
             }
             catch (Exception ex)
             {
@@ -276,6 +284,10 @@ namespace MySqlConnector
                 throw new MySqlConnectorException(
                     $"Error on create table {relationship.Table.SqlName} in database {relationship.Table.Schema}",
                     ex);
+            }
+            finally
+            {
+                cmd.Connection?.Close();
             }
 
             return true;
@@ -321,9 +333,9 @@ namespace MySqlConnector
 
         public void ExecuteScript(string query)
         {
+            var script = new MySqlScript(query);
             try
             {
-                var script = new MySqlScript(query);
                 script.Connection = _mysqlManager.GetConn();
                 script.Delimiter = "//";
                 script.Execute();
@@ -333,7 +345,16 @@ namespace MySqlConnector
                 throw new MySqlConnectorException(
                     $"Error on execute script command {query}", ex);
             }
+            finally
+            {
+                script.Connection?.Close();
+            }
 
+        }
+
+        public object SelectViewAsync()
+        {
+            throw new NotImplementedException();
         }
     }
 }

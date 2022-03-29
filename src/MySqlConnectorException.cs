@@ -5,11 +5,12 @@ using Persistence;
 namespace MySqlConnector
 {
     [Serializable]
-    public class MySqlConnectorException : Exception, SQLException
+    public class MySqlConnectorException : SQLException
     {
-        public int ErrorCode { get; set; }
+        public override int ErrorCode { get; set; }
 
-        public MySqlConnectorException(){
+        public MySqlConnectorException() : base()
+        {
 
         }
 

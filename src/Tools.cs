@@ -9,7 +9,18 @@ namespace MySqlConnector
     {
         public static void SetParameter(this MySqlCommand command, string parameter, object value)
         {
-            command.CommandText = command.CommandText.Replace(parameter, value.ToString());
+            command.Parameters.AddWithValue(parameter, value);
+        }
+
+        public static void PrepareParameters(this MySqlCommand command)
+        {
+            var result = command.CommandText;
+            foreach (MySqlParameter param in command.Parameters)
+            {
+                result = result.Replace(param.ParameterName, param.Value.ToString());
+            }
+            command.Parameters.Clear();
+            command.CommandText = result;
         }
         
         public static void Do<T>(this IEnumerable<T> sequence, Action<T> action)

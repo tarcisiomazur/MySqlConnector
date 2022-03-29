@@ -13,7 +13,6 @@ namespace MySqlConnector
     {
         private readonly DbExecutor _executor;
         internal readonly MysqlManager _mysqlManager;
-        private ISQL _isqlImplementation;
         public string DefaultSchema => _mysqlManager.Settings.Database;
         public bool IsConnected => _mysqlManager.IsConnected;
 
@@ -118,7 +117,7 @@ namespace MySqlConnector
             while (reader.Read())
             {
                 var trg = reader.GetString("Trigger");
-                if (trg.Contains("Version", StringComparison.CurrentCultureIgnoreCase))
+                if (trg.IndexOf("Version", StringComparison.CurrentCultureIgnoreCase) >= 0)
                     continue;
                 var stmt = reader.GetString("Statement");
                 var ev = reader.GetString("Event");
@@ -189,13 +188,13 @@ namespace MySqlConnector
             var tableCols = _executor.LoadTableColumns(table.SqlName, table.Schema);
             var keys = _executor.LoadTableKeys(table.SqlName, table.Schema);
 
-            foreach (var (name, field) in relationship.Links)
+            foreach (var pair in relationship.Links)
             {
-                if (!tableCols.Any(cts => cts.COLUMN_TYPE.SQLEquals(GetSqlFieldType(field)) &&
-                                          cts.COLUMN_NAME.SQLEquals(name)) ||
+                if (!tableCols.Any(cts => cts.COLUMN_TYPE.SQLEquals(GetSqlFieldType(pair.Value)) &&
+                                          cts.COLUMN_NAME.SQLEquals(pair.Key)) ||
                     !keys.Any(key => key.CONSTRAINT_NAME.SQLEquals(relationship.FkName) &&
-                                     key.COLUMN_TYPE.SQLEquals(GetSqlFieldType(field)) &&
-                                     key.COLUMN_NAME.SQLEquals(name)))
+                                     key.COLUMN_TYPE.SQLEquals(GetSqlFieldType(pair.Value)) &&
+                                     key.COLUMN_NAME.SQLEquals(pair.Key)))
                 {
                     return ForwardEngineer && _executor.UpdateForeignKeys(table, relationship, tableCols, keys);
                 }
@@ -240,6 +239,7 @@ namespace MySqlConnector
 
             try
             {
+                cmd.PrepareParameters();
                 var exec = cmd.ExecuteNonQuery();
                 return exec == 1 && table.DefaultPk ? cmd.LastInsertedId : exec;
             }
@@ -263,6 +263,7 @@ namespace MySqlConnector
                 fields.Join(",", pair => $"{pair.Key}={_ConvertValueToString(pair.Value)}"));
             try
             {
+                cmd.PrepareParameters();
                 var exec = cmd.ExecuteNonQuery();
                 return exec == 1 && table.DefaultPk ? cmd.LastInsertedId : exec;
             }
@@ -272,18 +273,37 @@ namespace MySqlConnector
             }
         }
 
-        IPReader ISQL.Select(Table table, Dictionary<string, object> keys, uint offset, uint length)
+        IPReader ISQL.Select(SelectParameters param)
         {
             var cmd = _mysqlManager.GetConn().CreateCommand();
-            var command =
-                $"SELECT *FROM {table.Schema}.{table.SqlName} " +
-                $"WHERE {string.Join(" AND ", keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"))} " +
-                $"LIMIT {offset},{length}";
-            MySqlDataReader reader = null;
+            var command = "SELECT *FROM @schema.@table ";
+            var where = "";
+            if (param.Where != null) where = $"({param.Where})";
+            if (param.Keys != null)
+            {
+                if (where.Length > 0) where += " AND ";
+                var join = string.Join(" AND ", param.Keys.Select(pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"));
+                where += $"({join})";
+            }
+            if (where.Length > 0)
+            {
+                command += "WHERE @where ";
+                cmd.SetParameter("@where", where);
+            }
+            if (param.Length is not null)
+            {
+                command += "LIMIT @limit ";
+                cmd.SetParameter("@limit", param.Offset != null ? $"{param.Offset},{param.Length}" : param.Length);
+            }
+            
             cmd.CommandText = command;
+            cmd.SetParameter("@schema", param.Table.Schema);
+            cmd.SetParameter("@table", param.Table.SqlName);
             try
             {
-                reader = cmd.ExecuteReader();
+                
+                cmd.PrepareParameters();
+                var reader = cmd.ExecuteReader();
                 return new MyReader(reader, cmd);
             }
             catch (Exception ex)
@@ -292,36 +312,15 @@ namespace MySqlConnector
             }
         }
 
-        IPReader ISQL.SelectWhereQuery(Table table, string query, uint offset, uint length)
-        {
-            var cmd = _mysqlManager.GetConn().CreateCommand();
-            var command = $"SELECT *FROM @schema.@table WHERE @query LIMIT {offset},{length}";
-            cmd.CommandText = command;
-            cmd.SetParameter("@schema", table.Schema);
-            cmd.SetParameter("@table", table.SqlName);
-            cmd.SetParameter("@query", query);
-            MySqlDataReader reader = null;
-            try
-            {
-                reader = cmd.ExecuteReader();
-                return new MyReader(reader, cmd);
-            }
-            catch (Exception ex)
-            {
-                throw new MySqlConnectorException($"ExecuteReader returned error on Select Query ({cmd.CommandText})",
-                    ex);
-            }
-        }
-
         IPReader ISQL.ExecuteProcedure(string procedureName, Dictionary<string, object> parameters)
         {
             var cmd = _mysqlManager.GetConn().CreateCommand();
             cmd.CommandType = CommandType.StoredProcedure;
             cmd.CommandText = procedureName;
-
-            foreach (var (key, value) in parameters)
+            cmd.Connection.ChangeDatabase(DefaultSchema);
+            foreach (var pair in parameters)
             {
-                cmd.Parameters.Add(new MySqlParameter(key, value));
+                cmd.Parameters.Add(new MySqlParameter(pair.Key, pair.Value));
             }
 
             MySqlDataReader reader = null;
@@ -348,7 +347,7 @@ namespace MySqlConnector
             MySqlDataReader reader = null;
             try
             {
-                cmd.Prepare();
+                cmd.PrepareParameters();
                 reader = cmd.ExecuteReader();
                 return new MyReader(reader, cmd);
             }
@@ -369,6 +368,7 @@ namespace MySqlConnector
             cmd.SetParameter("@where", keys.Join(" AND ", pair => $"{pair.Key} = {_ConvertValueToString(pair.Value)}"));
             try
             {
+                cmd.PrepareParameters();
                 var rows = cmd.ExecuteNonQuery();
                 return rows == 1;
             }
@@ -448,7 +448,7 @@ namespace MySqlConnector
         {
             if (ForwardEngineer == false) return;
             var query =
-                $"\nCREATE TRIGGER {triggerName} {sqlTriggerType.ToString().Replace("_", " ")} ON {table.Schema}.{table.SqlName} FOR EACH ROW BEGIN " +
+                $"\nUSE {table.Schema}//\nCREATE TRIGGER {triggerName} {sqlTriggerType.ToString().Replace("_", " ")} ON {table.Schema}.{table.SqlName} FOR EACH ROW BEGIN " +
                 sqlTrigger + "//";
             _executor.ExecuteScript(query);
         }
@@ -488,6 +488,7 @@ namespace MySqlConnector
                 double @double => @double.ToString(CultureInfo.InvariantCulture),
                 string @string => $"'{@string.Replace("'", "\\'").Replace(";", "\\;")}'",
                 char @char => $"'{@char}'",
+                byte[] @array => $"'{System.Text.Encoding.UTF8.GetString(@array)}'",
                 DateTime dateTime => $"{dateTime.ToSql()}",
                 _ => value.ToString()
             };
